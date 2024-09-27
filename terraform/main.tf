@@ -1,6 +1,6 @@
 # S3 bucket for storing processed data
 resource "aws_s3_bucket" "s3-dest" {
-  bucket       = "theplayer007-s3-dest"
+  bucket        = "theplayer007-s3-dest"
   force_destroy = true
   tags = {
     Name = "theplayer007-s3-dest"
@@ -44,7 +44,7 @@ resource "aws_iam_policy" "cdc-function-policy" {
             "logs:CreateLogStream",
             "logs:PutLogEvents"
           ],
-          "Resource": "*",
+          "Resource": ["arn:aws:logs:*:*:*"],
           "Effect": "Allow"
        } 
       ]
@@ -65,8 +65,8 @@ resource "aws_iam_role_policy_attachment" "cdc-function-policy-attachment" {
 resource "aws_dynamodb_table" "orders-dynamodb-table" {
   name           = "orders"
   billing_mode   = "PROVISIONED"
-  read_capacity  = 20
-  write_capacity = 20
+  read_capacity  = 5
+  write_capacity = 5
   hash_key       = "roll_no"
 
   attribute {
@@ -85,8 +85,9 @@ resource "aws_lambda_function" "cdc-transform-function" {
   filename      = "lambda.zip"
   function_name = "cdc-transform-function"
   role          = aws_iam_role.cdc-function-role.arn
-  handler       = "lambda_function.lambda_handler"
-  runtime       = "python3.10"
+  handler       = "lambda.lambda_handler"
+  runtime       = "python3.12"
+  timeout       = 180
   tags = {
     Name = "cdc-transform-function"
   }
@@ -96,7 +97,7 @@ resource "aws_lambda_function" "cdc-transform-function" {
 resource "aws_kinesis_stream" "cdc-stream" {
   name             = "cdc-stream"
   retention_period = 24
-  
+
   shard_level_metrics = [
     "IncomingBytes",
     "OutgoingBytes",
@@ -204,7 +205,7 @@ resource "aws_iam_policy" "firehose_cloudwatch" {
             "logs:PutLogEvents"
         ],
         "Resource": [
-            "${aws_cloudwatch_log_group.firehose_log_group.arn}"
+            "arn:aws:logs:*:*:*"
         ]
     }
   ]
@@ -245,24 +246,50 @@ resource "aws_iam_role_policy_attachment" "kinesis_firehose" {
   policy_arn = aws_iam_policy.kinesis_firehose.arn
 }
 
+resource "aws_iam_policy" "lambda_firehose" {
+  name_prefix = "lambda-firehose"
+
+  policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+        "Sid": "",
+        "Effect": "Allow",
+        "Action": [
+             "lambda:InvokeFunction",
+             "lambda:GetFunctionConfiguration"
+        ],
+        "Resource": "${aws_lambda_function.cdc-transform-function.arn}:$LATEST"
+    }
+  ]
+}
+EOF
+}
+
+resource "aws_iam_role_policy_attachment" "firehose_lambda" {
+  role       = aws_iam_role.firehose_role.name
+  policy_arn = aws_iam_policy.lambda_firehose.arn
+}
+
 resource "aws_iam_role" "firehose_role" {
   name               = "cdc-firehose-role"
   assume_role_policy = data.aws_iam_policy_document.firehose_assume_role.json
 }
 
 # Cloudwatch Log Group and Stream
-resource "aws_cloudwatch_log_group" "firehose_log_group" {
-  name = "/aws/kinesisfirehose/firehose-log-group"
+#resource "aws_cloudwatch_log_group" "firehose_log_group" {
+#  name = "/aws/kinesisfirehose/firehose-log-group"
+#
+#  tags = {
+#    Name = "firehose-log-group"
+#  }
+#}
 
-  tags = {
-    Name = "firehose-log-group"
-  }
-}
-
-resource "aws_cloudwatch_log_stream" "firehose_log_stream" {
-  name           = "/aws/kinesisfirehose/firehose-log-stream"
-  log_group_name = aws_cloudwatch_log_group.firehose_log_group.name
-}
+#resource "aws_cloudwatch_log_stream" "firehose_log_stream" {
+#  name           = "/aws/kinesisfirehose/firehose-log-stream"
+#  log_group_name = aws_cloudwatch_log_group.firehose_log_group.name
+#}
 
 # Kinesis Data Firehose Configuration
 resource "aws_kinesis_firehose_delivery_stream" "cdc_s3_stream" {
@@ -277,13 +304,13 @@ resource "aws_kinesis_firehose_delivery_stream" "cdc_s3_stream" {
   extended_s3_configuration {
     role_arn   = aws_iam_role.firehose_role.arn
     bucket_arn = aws_s3_bucket.s3-dest.arn
-    
-    cloudwatch_logging_options {
-      enabled = "true"
-      log_group_name = aws_cloudwatch_log_group.firehose_log_group.name
-      log_stream_name = aws_cloudwatch_log_stream.firehose_log_stream.name
-    }	
- 
+
+    #cloudwatch_logging_options {
+    #  enabled         = "true"
+    #  log_group_name  = aws_cloudwatch_log_group.firehose_log_group.name
+    #  log_stream_name = aws_cloudwatch_log_stream.firehose_log_stream.name
+    #}
+
     processing_configuration {
       enabled = "true"
 
