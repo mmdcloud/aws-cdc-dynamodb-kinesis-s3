@@ -1,7 +1,7 @@
-INSERT INTO "orders" value {'roll_no' : 5,'price' : 5, 'quantity': 235 }
-INSERT INTO "orders" value {'roll_no' : 2,'price' : 10, 'quantity': 10 }
-INSERT INTO "orders" value {'roll_no' : 3,'price' : 20, 'quantity': 100 }
-INSERT INTO "orders" value {'roll_no' : 4,'price' : 30, 'quantity': 15 }
+INSERT INTO "orders" value {'roll_no' : 5,'price' : 5, 'quantity': 235 };
+INSERT INTO "orders" value {'roll_no' : 2,'price' : 10, 'quantity': 10 };
+INSERT INTO "orders" value {'roll_no' : 3,'price' : 20, 'quantity': 100 };
+INSERT INTO "orders" value {'roll_no' : 4,'price' : 30, 'quantity': 15 };
 
 UPDATE orders SET price=90 WHERE roll_no=5
 

@@ -1,9 +1,9 @@
 # S3 bucket for storing processed data
 resource "aws_s3_bucket" "s3-dest" {
-  bucket        = "theplayer007-s3-dest"
+  bucket        = "madmaxkinesis-s3-dest"
   force_destroy = true
   tags = {
-    Name = "theplayer007-s3-dest"
+    Name = "madmaxkinesis-s3-dest"
   }
 }
 
@@ -277,20 +277,6 @@ resource "aws_iam_role" "firehose_role" {
   assume_role_policy = data.aws_iam_policy_document.firehose_assume_role.json
 }
 
-# Cloudwatch Log Group and Stream
-#resource "aws_cloudwatch_log_group" "firehose_log_group" {
-#  name = "/aws/kinesisfirehose/firehose-log-group"
-#
-#  tags = {
-#    Name = "firehose-log-group"
-#  }
-#}
-
-#resource "aws_cloudwatch_log_stream" "firehose_log_stream" {
-#  name           = "/aws/kinesisfirehose/firehose-log-stream"
-#  log_group_name = aws_cloudwatch_log_group.firehose_log_group.name
-#}
-
 # Kinesis Data Firehose Configuration
 resource "aws_kinesis_firehose_delivery_stream" "cdc_s3_stream" {
   name        = "cdc-s3-stream"
@@ -304,12 +290,6 @@ resource "aws_kinesis_firehose_delivery_stream" "cdc_s3_stream" {
   extended_s3_configuration {
     role_arn   = aws_iam_role.firehose_role.arn
     bucket_arn = aws_s3_bucket.s3-dest.arn
-
-    #cloudwatch_logging_options {
-    #  enabled         = "true"
-    #  log_group_name  = aws_cloudwatch_log_group.firehose_log_group.name
-    #  log_stream_name = aws_cloudwatch_log_stream.firehose_log_stream.name
-    #}
 
     processing_configuration {
       enabled = "true"
