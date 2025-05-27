@@ -1,15 +1,16 @@
 # S3 bucket for storing processed data
-resource "aws_s3_bucket" "s3-dest" {
-  bucket        = "madmaxkinesis-s3-dest"
+module "s3_bucket" {
+  source        = "terraform/modules/s3"
+  bucket_name   = "madmaxkinesis-s3-dest"
   force_destroy = true
-  tags = {
-    Name = "madmaxkinesis-s3-dest"
-  }
 }
 
-# Lambda Function Role
-resource "aws_iam_role" "cdc-function-role" {
-  name               = "cdc-function-role"
+module "cdc_function_role" {
+  source             = "terraform/modules/iam"
+  role_name          = "cdc_function_role"
+  role_description   = "cdc_function_role"
+  policy_name        = "cdc_function_iam_policy"
+  policy_description = "cdc_function_iam_policy"
   assume_role_policy = <<EOF
     {
       "Version": "2012-10-17",
@@ -25,16 +26,7 @@ resource "aws_iam_role" "cdc-function-role" {
       ]
     }
     EOF
-  tags = {
-    Name = "cdc-function-role"
-  }
-}
-
-# Lambda Function Policy
-resource "aws_iam_policy" "cdc-function-policy" {
-  name        = "cdc-function-policy"
-  description = "AWS IAM Policy for managing aws lambda role"
-  policy      = <<EOF
+  policy             = <<EOF
     {
       "Version": "2012-10-17",
       "Statement": [
@@ -50,72 +42,140 @@ resource "aws_iam_policy" "cdc-function-policy" {
       ]
     }
     EOF
-  tags = {
-    Name = "cdc-function-policy"
-  }
-}
-
-# Lambda Function Role-Policy Attachment
-resource "aws_iam_role_policy_attachment" "cdc-function-policy-attachment" {
-  role       = aws_iam_role.cdc-function-role.name
-  policy_arn = aws_iam_policy.cdc-function-policy.arn
 }
 
 # DynamoDB table
-resource "aws_dynamodb_table" "orders-dynamodb-table" {
+module "orders_dynamodb_table" {
+  source = "terraform/modules/dynamodb"
   name           = "orders"
   billing_mode   = "PROVISIONED"
   read_capacity  = 5
   write_capacity = 5
   hash_key       = "roll_no"
-
-  attribute {
-    name = "roll_no"
-    type = "N"
-  }
-
-  ttl {
-    attribute_name = "TimeToExist"
-    enabled        = true
-  }
+  attributes = [
+    {
+      name = "roll_no"
+      type = "N"
+    }
+  ]
+  ttl_attribute_name = "TimeToExist"
+  ttl_enabled        = true
 }
 
-# Lambda function configuration
-resource "aws_lambda_function" "cdc-transform-function" {
+module "cdc_transform_function" {
+  source        = "terraform/modules/lambda"
   filename      = "lambda.zip"
   function_name = "cdc-transform-function"
-  role          = aws_iam_role.cdc-function-role.arn
+  role          = module.cdc_function_role.role_arn
   handler       = "lambda.lambda_handler"
   runtime       = "python3.12"
   timeout       = 180
-  tags = {
-    Name = "cdc-transform-function"
-  }
 }
 
 # Kinesis Data Stream configuration
-resource "aws_kinesis_stream" "cdc-stream" {
-  name             = "cdc-stream"
+module "cdc_kinesis_stream" {
+  source = "terraform/modules/kinesis"
+  name   = "cdc-stream"
   retention_period = 24
-
   shard_level_metrics = [
     "IncomingBytes",
     "OutgoingBytes",
   ]
-
-  stream_mode_details {
-    stream_mode = "ON_DEMAND"
-  }
-
-  tags = {
-    Name = "cdc-stream"
-  }
+  stream_mode = "ON_DEMAND"
 }
 
 # DynamoDB - Kinesis Stream Configuration
 resource "aws_dynamodb_kinesis_streaming_destination" "dynamodb-kinesis-stream" {
-  stream_arn = aws_kinesis_stream.cdc-stream.arn
-  table_name = aws_dynamodb_table.orders-dynamodb-table.name
+  stream_arn = module.cdc_kinesis_stream.arn
+  table_name = module.orders_dynamodb_table.name
+}
+
+# Firehose Role
+module "firehose_role" {
+  source             = "terraform/modules/iam"
+  role_name          = "firehose_role"
+  role_description   = "firehose_role"
+  policy_name        = "firehose_iam_policy"
+  policy_description = "firehose_iam_policy"
+  assume_role_policy = <<EOF
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Action": "sts:AssumeRole",
+          "Principal": {
+            "Service": "firehose.amazonaws.com"
+          },
+          "Effect": "Allow",
+          "Sid": ""
+        }
+      ]
+    }
+    EOF
+  policy             = <<EOF
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+            "Sid": "",
+            "Effect": "Allow",
+            "Action": [
+                "s3:AbortMultipartUpload",
+                "s3:GetBucketLocation",
+                "s3:GetObject",
+                "s3:ListBucket",
+                "s3:ListBucketMultipartUploads",
+                "s3:PutObject"
+            ],
+            "Resource": [
+                "${module.s3_bucket.arn}",
+                "${module.s3_bucket.arn}/*"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "firehose:PutRecord",
+                "firehose:PutRecordBatch"
+            ],
+            "Resource": [
+                "${aws_kinesis_firehose_delivery_stream.cdc_s3_stream.arn}"
+            ]
+        },
+        {
+            "Sid": "",
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": [
+                "arn:aws:logs:*:*:*"
+            ]
+        },
+        {
+            "Sid": "",
+            "Effect": "Allow",
+            "Action": [
+                "kinesis:DescribeStream",
+                "kinesis:GetShardIterator",
+                "kinesis:GetRecords",
+                "kinesis:ListShards"
+            ],
+            "Resource": "${module.cdc_kinesis_stream.arn}"
+        },
+        {
+            "Sid": "",
+            "Effect": "Allow",
+            "Action": [
+                "lambda:InvokeFunction",
+                "lambda:GetFunctionConfiguration"
+            ],
+            "Resource": "${module.cdc_transform_function.arn}:$LATEST"
+        }
+      ]
+    }
+    EOF
 }
 
 # Firehose Role
@@ -130,146 +190,6 @@ data "aws_iam_policy_document" "firehose_assume_role" {
 
     actions = ["sts:AssumeRole"]
   }
-}
-
-resource "aws_iam_policy" "firehose_s3" {
-  name_prefix = "firehose-s3"
-  policy      = <<-EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-        "Sid": "",
-        "Effect": "Allow",
-        "Action": [
-            "s3:AbortMultipartUpload",
-            "s3:GetBucketLocation",
-            "s3:GetObject",
-            "s3:ListBucket",
-            "s3:ListBucketMultipartUploads",
-            "s3:PutObject"
-        ],
-        "Resource": [
-            "${aws_s3_bucket.s3-dest.arn}",
-            "${aws_s3_bucket.s3-dest.arn}/*"
-        ]
-    }
-  ]
-}
-EOF
-}
-
-resource "aws_iam_role_policy_attachment" "firehose_s3" {
-  role       = aws_iam_role.firehose_role.name
-  policy_arn = aws_iam_policy.firehose_s3.arn
-}
-
-resource "aws_iam_policy" "firehose_put_record" {
-  name_prefix = "firehose_put_record"
-  policy      = <<-EOF
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "firehose:PutRecord",
-                "firehose:PutRecordBatch"
-            ],
-            "Resource": [
-                "${aws_kinesis_firehose_delivery_stream.cdc_s3_stream.arn}"
-            ]
-        }
-    ]
-}
-EOF
-}
-
-resource "aws_iam_role_policy_attachment" "firehose_put_record" {
-  role       = aws_iam_role.firehose_role.name
-  policy_arn = aws_iam_policy.firehose_put_record.arn
-}
-
-resource "aws_iam_policy" "firehose_cloudwatch" {
-  name_prefix = "firehose-cloudwatch"
-
-  policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-        "Sid": "",
-        "Effect": "Allow",
-        "Action": [
-            "logs:CreateLogStream",
-            "logs:PutLogEvents"
-        ],
-        "Resource": [
-            "arn:aws:logs:*:*:*"
-        ]
-    }
-  ]
-}
-EOF
-}
-
-resource "aws_iam_role_policy_attachment" "firehose_cloudwatch" {
-  role       = aws_iam_role.firehose_role.name
-  policy_arn = aws_iam_policy.firehose_cloudwatch.arn
-}
-
-resource "aws_iam_policy" "kinesis_firehose" {
-  name_prefix = "kinesis-firehose"
-
-  policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-        "Sid": "",
-        "Effect": "Allow",
-        "Action": [
-            "kinesis:DescribeStream",
-            "kinesis:GetShardIterator",
-            "kinesis:GetRecords",
-            "kinesis:ListShards"
-        ],
-        "Resource": "${aws_kinesis_stream.cdc-stream.arn}"
-    }
-  ]
-}
-EOF
-}
-
-resource "aws_iam_role_policy_attachment" "kinesis_firehose" {
-  role       = aws_iam_role.firehose_role.name
-  policy_arn = aws_iam_policy.kinesis_firehose.arn
-}
-
-resource "aws_iam_policy" "lambda_firehose" {
-  name_prefix = "lambda-firehose"
-
-  policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-        "Sid": "",
-        "Effect": "Allow",
-        "Action": [
-             "lambda:InvokeFunction",
-             "lambda:GetFunctionConfiguration"
-        ],
-        "Resource": "${aws_lambda_function.cdc-transform-function.arn}:$LATEST"
-    }
-  ]
-}
-EOF
-}
-
-resource "aws_iam_role_policy_attachment" "firehose_lambda" {
-  role       = aws_iam_role.firehose_role.name
-  policy_arn = aws_iam_policy.lambda_firehose.arn
 }
 
 resource "aws_iam_role" "firehose_role" {
