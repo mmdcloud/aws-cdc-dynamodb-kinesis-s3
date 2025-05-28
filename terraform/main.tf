@@ -1,12 +1,12 @@
 # S3 bucket for storing processed data
 module "s3_bucket" {
-  source        = "terraform/modules/s3"
+  source        = "./modules/s3"
   bucket_name   = "madmaxkinesis-s3-dest"
   force_destroy = true
 }
 
 module "cdc_function_role" {
-  source             = "terraform/modules/iam"
+  source             = "./modules/iam"
   role_name          = "cdc_function_role"
   role_description   = "cdc_function_role"
   policy_name        = "cdc_function_iam_policy"
@@ -46,7 +46,7 @@ module "cdc_function_role" {
 
 # DynamoDB table
 module "orders_dynamodb_table" {
-  source = "terraform/modules/dynamodb"
+  source         = "./modules/dynamodb"
   name           = "orders"
   billing_mode   = "PROVISIONED"
   read_capacity  = 5
@@ -63,8 +63,8 @@ module "orders_dynamodb_table" {
 }
 
 module "cdc_transform_function" {
-  source        = "terraform/modules/lambda"
-  filename      = "lambda.zip"
+  source        = "./modules/lambda"
+  filename      = "./files/lambda.zip"
   function_name = "cdc-transform-function"
   role          = module.cdc_function_role.role_arn
   handler       = "lambda.lambda_handler"
@@ -74,8 +74,8 @@ module "cdc_transform_function" {
 
 # Kinesis Data Stream configuration
 module "cdc_kinesis_stream" {
-  source = "terraform/modules/kinesis"
-  name   = "cdc-stream"
+  source           = "./modules/kinesis"
+  name             = "cdc-stream"
   retention_period = 24
   shard_level_metrics = [
     "IncomingBytes",
@@ -92,7 +92,7 @@ resource "aws_dynamodb_kinesis_streaming_destination" "dynamodb-kinesis-stream" 
 
 # Firehose Role
 module "firehose_role" {
-  source             = "terraform/modules/iam"
+  source             = "./modules/iam"
   role_name          = "firehose_role"
   role_description   = "firehose_role"
   policy_name        = "firehose_iam_policy"
@@ -139,7 +139,7 @@ module "firehose_role" {
                 "firehose:PutRecordBatch"
             ],
             "Resource": [
-                "${aws_kinesis_firehose_delivery_stream.cdc_s3_stream.arn}"
+                "${module.cdc_firehose.arn}"
             ]
         },
         {
@@ -158,6 +158,7 @@ module "firehose_role" {
             "Effect": "Allow",
             "Action": [
                 "kinesis:DescribeStream",
+                "kinesis:DescribeStreamSummary",
                 "kinesis:GetShardIterator",
                 "kinesis:GetRecords",
                 "kinesis:ListShards"
@@ -179,49 +180,78 @@ module "firehose_role" {
 }
 
 # Firehose Role
-data "aws_iam_policy_document" "firehose_assume_role" {
-  statement {
-    effect = "Allow"
+# data "aws_iam_policy_document" "firehose_assume_role" {
+#   statement {
+#     effect = "Allow"
 
-    principals {
-      type        = "Service"
-      identifiers = ["firehose.amazonaws.com"]
-    }
+#     principals {
+#       type        = "Service"
+#       identifiers = ["firehose.amazonaws.com"]
+#     }
 
-    actions = ["sts:AssumeRole"]
-  }
-}
+#     actions = ["sts:AssumeRole"]
+#   }
+# }
 
-resource "aws_iam_role" "firehose_role" {
-  name               = "cdc-firehose-role"
-  assume_role_policy = data.aws_iam_policy_document.firehose_assume_role.json
-}
+# resource "aws_iam_role" "firehose_role" {
+#   name               = "cdc-firehose-role"
+#   assume_role_policy = data.aws_iam_policy_document.firehose_assume_role.json
+# }
 
 # Kinesis Data Firehose Configuration
-resource "aws_kinesis_firehose_delivery_stream" "cdc_s3_stream" {
-  name        = "cdc-s3-stream"
-  destination = "extended_s3"
+module "cdc_firehose" {
+  source             = "./modules/firehose"
+  name               = "cdc-s3-stream"
+  destination        = "extended_s3"
+  kinesis_stream_arn = module.cdc_kinesis_stream.arn
+  kinesis_role_arn   = module.firehose_role.role_arn
 
-  kinesis_source_configuration {
-    kinesis_stream_arn = aws_kinesis_stream.cdc-stream.arn
-    role_arn           = aws_iam_role.firehose_role.arn
-  }
-
-  extended_s3_configuration {
-    role_arn   = aws_iam_role.firehose_role.arn
-    bucket_arn = aws_s3_bucket.s3-dest.arn
-
-    processing_configuration {
-      enabled = "true"
-
-      processors {
-        type = "Lambda"
-
-        parameters {
-          parameter_name  = "LambdaArn"
-          parameter_value = "${aws_lambda_function.cdc-transform-function.arn}:$LATEST"
+  extended_s3_configuration = {
+    role_arn           = module.firehose_role.role_arn
+    bucket_arn         = module.s3_bucket.arn
+    buffering_interval = 300
+    buffering_size     = 5
+    compression_format = "UNCOMPRESSED"
+    processing_configuration = {
+      enabled = true
+      processors = [
+        {
+          type = "Lambda"
+          parameters = [
+            {
+              parameter_name  = "LambdaArn"
+              parameter_value = "${module.cdc_transform_function.arn}:$LATEST"
+            }
+          ]
         }
-      }
+      ]
     }
   }
 }
+# resource "aws_kinesis_firehose_delivery_stream" "cdc_s3_stream" {
+#   name        = "cdc-s3-stream"
+#   destination = "extended_s3"
+
+#   kinesis_source_configuration {
+#     kinesis_stream_arn = aws_kinesis_stream.cdc-stream.arn
+#     role_arn           = aws_iam_role.firehose_role.arn
+#   }
+
+#   extended_s3_configuration {
+#     role_arn   = aws_iam_role.firehose_role.arn
+#     bucket_arn = aws_s3_bucket.s3-dest.arn
+
+#     processing_configuration {
+#       enabled = "true"
+
+#       processors {
+#         type = "Lambda"
+
+#         parameters {
+#           parameter_name  = "LambdaArn"
+#           parameter_value = "${aws_lambda_function.cdc-transform-function.arn}:$LATEST"
+#         }
+#       }
+#     }
+#   }
+# } 
