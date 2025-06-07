@@ -117,86 +117,56 @@ module "firehose_role" {
       "Version": "2012-10-17",
       "Statement": [
         {
-            "Sid": "",
-            "Effect": "Allow",
-            "Action": [
-                "s3:AbortMultipartUpload",
-                "s3:GetBucketLocation",
-                "s3:GetObject",
-                "s3:ListBucket",
-                "s3:ListBucketMultipartUploads",
-                "s3:PutObject"
-            ],
-            "Resource": [
-                "${module.s3_bucket.arn}",
-                "${module.s3_bucket.arn}/*"
-            ]
+          "Sid": "",
+          "Effect": "Allow",
+          "Action": [
+              "s3:AbortMultipartUpload",
+              "s3:GetBucketLocation",
+              "s3:GetObject",
+              "s3:ListBucket",
+              "s3:ListBucketMultipartUploads",
+              "s3:PutObject"
+          ],
+          "Resource": [
+              "${module.s3_bucket.arn}",
+              "${module.s3_bucket.arn}/*"
+          ]
         },
         {
-            "Effect": "Allow",
-            "Action": [
-                "firehose:PutRecord",
-                "firehose:PutRecordBatch"
-            ],
-            "Resource": [
-                "${module.cdc_firehose.arn}"
-            ]
+          "Effect": "Allow",
+          "Action": [
+              "kinesis:DescribeStream",
+              "kinesis:GetShardIterator",
+              "kinesis:GetRecords",
+              "kinesis:ListShards",
+              "kinesis:DescribeStreamSummary"
+          ],
+          "Resource": "${module.cdc_kinesis_stream.arn}"
         },
         {
-            "Sid": "",
-            "Effect": "Allow",
-            "Action": [
-                "logs:CreateLogStream",
-                "logs:PutLogEvents"
-            ],
-            "Resource": [
-                "arn:aws:logs:*:*:*"
-            ]
+          "Sid": "",
+          "Effect": "Allow",
+          "Action": [
+              "logs:CreateLogStream",
+              "logs:PutLogEvents"
+          ],
+          "Resource": [
+              "arn:aws:logs:*:*:*"
+          ]
         },
         {
-            "Sid": "",
-            "Effect": "Allow",
-            "Action": [
-                "kinesis:DescribeStream",
-                "kinesis:DescribeStreamSummary",
-                "kinesis:GetShardIterator",
-                "kinesis:GetRecords",
-                "kinesis:ListShards"
-            ],
-            "Resource": "${module.cdc_kinesis_stream.arn}"
-        },
-        {
-            "Sid": "",
-            "Effect": "Allow",
-            "Action": [
-                "lambda:InvokeFunction",
-                "lambda:GetFunctionConfiguration"
-            ],
-            "Resource": "${module.cdc_transform_function.arn}:$LATEST"
+          "Sid": "",
+          "Effect": "Allow",
+          "Action": [
+              "lambda:InvokeFunction",
+              "lambda:GetFunctionConfiguration"
+          ],
+          "Resource": "${module.cdc_transform_function.arn}:*"
         }
       ]
     }
     EOF
 }
-
-# Firehose Role
-# data "aws_iam_policy_document" "firehose_assume_role" {
-#   statement {
-#     effect = "Allow"
-
-#     principals {
-#       type        = "Service"
-#       identifiers = ["firehose.amazonaws.com"]
-#     }
-
-#     actions = ["sts:AssumeRole"]
-#   }
-# }
-
-# resource "aws_iam_role" "firehose_role" {
-#   name               = "cdc-firehose-role"
-#   assume_role_policy = data.aws_iam_policy_document.firehose_assume_role.json
-# }
 
 # Kinesis Data Firehose Configuration
 module "cdc_firehose" {
@@ -228,30 +198,3 @@ module "cdc_firehose" {
     }
   }
 }
-# resource "aws_kinesis_firehose_delivery_stream" "cdc_s3_stream" {
-#   name        = "cdc-s3-stream"
-#   destination = "extended_s3"
-
-#   kinesis_source_configuration {
-#     kinesis_stream_arn = aws_kinesis_stream.cdc-stream.arn
-#     role_arn           = aws_iam_role.firehose_role.arn
-#   }
-
-#   extended_s3_configuration {
-#     role_arn   = aws_iam_role.firehose_role.arn
-#     bucket_arn = aws_s3_bucket.s3-dest.arn
-
-#     processing_configuration {
-#       enabled = "true"
-
-#       processors {
-#         type = "Lambda"
-
-#         parameters {
-#           parameter_name  = "LambdaArn"
-#           parameter_value = "${aws_lambda_function.cdc-transform-function.arn}:$LATEST"
-#         }
-#       }
-#     }
-#   }
-# } 
